@@ -9,6 +9,7 @@ theme: sandstone
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(here)
+library(knitr)
 source(here::here("code/lib.R"))
 theme_set(theme_bw())
 
@@ -47,11 +48,12 @@ estimativas_raw %>%
     count(TaskNumber, sort = T)
 ```
 
-### 1 estimativa por task
 
-Para nossa análise, usaremos uma estimativa por task. Caso haja mais de uma usaremos a média das estimativas_raw:
 
 ```{r}
+### 1 estimativa por task
+
+# Para nossa análise, usaremos uma estimativa por task. Caso haja mais de uma usaremos a média das estimativas_raw:
 estimativas = estimativas_raw %>%
     group_by(ProjectCode, TaskNumber, Category, Priority, Summary) %>%
     summarise(
@@ -62,9 +64,10 @@ estimativas = estimativas_raw %>%
     ungroup()
 ```
 
-### Dados por time
 
 ```{r}
+### Dados por time
+
 por_time = estimativas_raw %>% 
     group_by(ProjectCode) %>% 
     summarise(devs = NROW(unique(DeveloperID)), 
@@ -75,6 +78,116 @@ por_time = estimativas_raw %>%
 
 ## Qual a relação entre as estimativas e horas reais tomadas na empresa como um todo e em diferentes categorias de tarefa?
 
+### Em toda empresa
+
+Para avaliar a relação entre as horas estimadas e reais utilizaremos o gráfico abaixo, vale lembrar que a escola usada nos dois eixos é **log10**. A linha pontinhada indica os casos em que a estimativa acertou exatamente as horas gastas na task.
+
+```{r}
+estimativas %>%
+    ggplot(aes(x=HoursActual, y=HoursEstimate)) +
+    geom_point(alpha=0.2, color = "#13658A") +
+    geom_abline(slope = 1, linetype='dashed') +
+    scale_y_log10() +
+    scale_x_log10() +
+    labs(title='Relação entre horas estimadas e horas reais',
+         x="Horas Reais - log10",
+         y="Horas Estimadas - log10")
+```
+
+Observamos que os pontos estão distribuídos mais ou menos ao redor da linha tracejada, o que é um indício de uma correlação linear forte entre o logaritmo na base 10 das Horas estimadas e o logarimo na base 10 das Horas exatas.
+
+Podemos calcular a correlação entre as duas variáveis, para tal utilizaremos os três métodos mais conhecidos:
+
+- Pearson
+- Spearman
+- Kendal
+
+```{r}
+estimativas$HoursActualLog10 <- log10(estimativas$HoursActual)
+estimativas$HoursEstimateLog10 <- log10(estimativas$HoursEstimate)
+
+pearson = cor(estimativas$HoursActualLog10, estimativas$HoursEstimateLog10, method = "pearson")
+spearman = cor(estimativas$HoursActualLog10, estimativas$HoursEstimateLog10, method = "spearman")
+kendall = cor(estimativas$HoursActualLog10, estimativas$HoursEstimateLog10, method = "kendall")
+```
+
+
+| **Pearson**        | **Spearman**           | **Kendall**  |
+|:-------------:|:-------------:|:-------------:|
+|`r pearson`|`r spearman`|`r kendall`|
+
+Os valores de correlação confirmam as suspeitas da existência de uma **correlação positiva forte** entre o log10 das variáveis.
+
+*Lembrando que a correlação observada é entre o log10 das duas variáveis, não podemos dizer que há uma correlação linear forte entre Horas estimadas e Horas exatas, mas podemos dizer isso do log10 das mesmas*
+
+### Por categoria
+
+A visualização usada aqui é bem similiar a anterior, mas neste caso, estamos separando por categoria.
+
+Mais uma vez **as variáveis estão em log10**.
+
+```{r}
+estimativas %>%
+    ggplot(aes(x=HoursActual, y=HoursEstimate, color = Category)) +
+    geom_point(alpha=0.2) +
+    geom_abline(slope = 1, linetype='dashed') +
+    scale_y_log10() +
+    scale_x_log10() +
+    labs(title='Relação entre horas estimadas e horas reais',
+         subtitle='Por categoria',
+         x="Horas Reais - log10",
+         y="Horas Estimadas - log10") +
+    facet_wrap(~Category, ncol=1) +
+    theme(legend.position = "none")
+```
+
+
+Similarmente à visão geral temos indícios de correlação positiva forte entre as Horas estimadas e as Horas reais para todas as categorias. Vamos tentar mensurar essa relação, mais uma vez, através das medidas de correlação.
+
+```{r}
+estimativas %>% 
+  group_by(Category) %>% 
+  summarise(pearson = cor(HoursActualLog10, HoursEstimateLog10, method = "pearson"), 
+            spearman = cor(HoursActualLog10, HoursEstimateLog10, method = "spearman"),
+            kendall = cor(HoursActualLog10, HoursEstimateLog10, method = "kendall")) %>%
+    kable()
+```
+
+
+Vemos que os valores indicam a **existência de correlação linear forte entre o log10 das variáveis**.
+
+Os valores da correlação Kendal são menores que os demais, mas esse comportamento já é esperado pois esse método apresenta, em geral, valores menores que os outros dois métodos.
 
 ## Equipes com mais desenvolvedores produzem estimativas com mais ou menos erro que equipes menores? 
+
+```{r}
+por_time %>%
+    mutate(devs=as.factor(devs)) %>%
+    ggplot(aes(x=devs, y=erro_medio_abs)) +
+    geom_point(color="#434ACB") + 
+    scale_y_log10() + 
+    labs(title='Relação entre tamanho da equipe e o erro da estimativa',
+         x="Número de desenvolvedores na equipe",
+         y="Erro absoluto da estimativa - log10")
+```
+
+Pela visualização não é possível observar nenhuma tendência no valor do erro quando variado o tamanho da equipe, o que é um indicativo de que não existe relação entre esses dois fatores, observando o valor da correlação:
+
+
+```{r}
+por_time$erro_medio_abs_log10 <- log10(por_time$erro_medio_abs)
+
+pearson = cor(por_time$erro_medio_abs_log10, por_time$devs, method = "pearson")
+spearman = cor(por_time$erro_medio_abs_log10, por_time$devs, method = "spearman")
+kendall = cor(por_time$erro_medio_abs_log10, por_time$devs, method = "kendall")
+
+```
+
+
+| **Pearson**        | **Spearman**           | **Kendall**  |
+|:-------------:|:-------------:|:-------------:|
+|`r pearson`|`r spearman`|`r kendall`|
+
+Observamos que os valores são bem próximos a zero o que indica que **não há correlação linear** entre e logaritmo na base 10 do erro absoluto da estimativa e o número de desenvolvedores da equipe.
+
 
